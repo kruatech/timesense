@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=77.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "timesense"
+version = "1.0.0"
+description = "Natural-language date/time & event parser for Russian (and English)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Anton Krutilin", email = "a@krutilin.pro" }]
+keywords = ["nlp", "calendar", "parser", "russian", "datetime", "natural-language"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Text Processing :: Linguistic",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Natural Language :: Russian",
+    "Natural Language :: English",
+]
+# Без обязательных зависимостей — чистый Python.
+dependencies = []
+
+[project.optional-dependencies]
+morph = ["pymorphy3>=1.2.0", "pymorphy3-dicts-ru>=2.4.0"]
+dev = ["pytest>=7.0.0", "pytest-cov>=4.0.0", "black>=22.0.0", "flake8>=5.0.0"]
+
+[project.urls]
+Homepage = "https://github.com/kruatech/timesense"
+Source = "https://github.com/kruatech/timesense"
+"Bug Reports" = "https://github.com/kruatech/timesense/issues"
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+include = ["timesense*"]
+exclude = ["timesense.tests*"]
+
+[tool.pytest.ini_options]
+testpaths = ["timesense/tests"]
+python_files = ["test_suite.py", "test_en.py", "test_stress_ru_500.py", "test_stress_en_500.py", "test_regression_fixes.py"]
+
+[tool.setuptools.package-data]
+timesense = ["py.typed"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39"]

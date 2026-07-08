@@ -1,0 +1,6 @@
+[flake8]
+max-line-length = 100
+extend-ignore = E203, W503, E501, E701, E702
+exclude = .git, __pycache__, build, dist, *.egg-info
+per-file-ignores =
+    timesense/tests/*:E402,E731

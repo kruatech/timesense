@@ -1,0 +1,3 @@
+# timesense не имеет обязательных зависимостей (pure-Python).
+# Опционально для улучшенной морфологии:
+#   pip install "timesense[morph]"

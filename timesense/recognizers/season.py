@@ -13,7 +13,27 @@ class SeasonRecognizer(Recognizer):
         while i < len(tokens):
             r = self._try_season(tokens, i, now) or self._try_quarter(tokens, i, now)
             if r:
-                results.append(r[0])
+                tok = r[0]
+                prev = tokens[i - 1].value.lower() if i > 0 else ""
+                if prev in ("прошлой", "прошлым", "прошлого", "прошлую", "прошедшей", "прошедшим"):
+                    # «прошлой зимой» — сезон годом раньше ближайшего (текущего или будущего)
+                    tok.date_from = tok.date_from.replace(year=tok.date_from.year - 1)
+                    last_day = tok.date_to.day
+                    if tok.date_to.month == 2:
+                        from calendar import monthrange as _mr
+
+                        last_day = _mr(tok.date_to.year - 1, 2)[1]
+                    tok.date_to = tok.date_to.replace(year=tok.date_to.year - 1, day=last_day)
+                    tok.is_past = tok.date_to < now
+                    tok.start = tokens[i - 1].start
+                elif prev in ("следующей", "следующим", "будущей", "будущим") and tok.date_from <= now:
+                    # «следующей зимой» во время зимы — следующая, а не текущая
+                    tok.date_from = tok.date_from.replace(year=tok.date_from.year + 1)
+                    tok.date_to = tok.date_to.replace(year=tok.date_to.year + 1)
+                    tok.start = tokens[i - 1].start
+                elif prev in ("этой", "этим", "этого", "следующей", "следующим", "будущей", "будущим"):
+                    tok.start = tokens[i - 1].start
+                results.append(tok)
                 i += r[1]
             else:
                 i += 1
@@ -36,7 +56,20 @@ class SeasonRecognizer(Recognizer):
             return None
         sm, sd, em, ed = season
         winter = sm == 12
+        if winter and now.month <= 2:
+            y -= 1  # в январе–феврале «зимой» — текущая зима (началась в декабре)
         ey = y + 1 if winter else y
+        if winter:
+            from calendar import monthrange as _mr
+
+            ed = _mr(ey, 2)[1]  # 29 февраля в високосный год
+        if self.config.prefer_nearest_future and datetime(ey, em, ed, 23, 59) < now:
+            # сезон уже прошёл в этом году → ближайший будущий (паритет с EN)
+            y, ey = y + 1, ey + 1
+            if winter:
+                from calendar import monthrange as _mr
+
+                ed = _mr(ey, 2)[1]
         # модификатор начало/конец/середина перед сезоном (+ опциональный предлог)
         part = None
         start_i = i
@@ -103,6 +136,8 @@ class SeasonRecognizer(Recognizer):
         ends = {1: (3, 31), 2: (6, 30), 3: (9, 30), 4: (12, 31)}
         sm, sd = starts[num]
         em, ed = ends[num]
+        if self.config.prefer_nearest_future and datetime(y, em, ed, 23, 59) < now:
+            y += 1  # квартал уже прошёл → в следующем году
         return (self._mk_period(y, sm, sd, y, em, ed, t, 0.85, tokens[i + 1].end), 2)
 
     def _mk_period(self, y1, m1, d1, y2, m2, d2, t, conf, end_pos=None):

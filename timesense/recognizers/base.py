@@ -7,7 +7,7 @@ from ..dict.morph_adapter import get_morph
 class Recognizer(ABC):
     def __init__(self, config):
         self.config = config
-        self.morph = get_morph()
+        self.morph = get_morph(getattr(config, "use_morph", None))
 
     @abstractmethod
     def recognize(self, tokens, now):

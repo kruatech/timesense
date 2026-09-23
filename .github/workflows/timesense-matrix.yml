@@ -1,0 +1,61 @@
+# Матрица проверок timesense: все поддерживаемые Python × морфология вкл/выкл.
+# Отдельный файл, чтобы не перезаписать существующий ci.yml (если он есть).
+name: timesense-matrix
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        morph: ["off", "on"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          if [ "${{ matrix.morph }}" = "on" ]; then pip install -e ".[morph]"; fi
+      - name: pytest
+        env:
+          TIMESENSE_MORPH: ${{ matrix.morph == 'off' && '0' || '' }}
+        run: python -m pytest -q
+      - name: RU runner
+        run: python -m timesense.tests.test_fixes --fail-only
+      - name: EN runner
+        run: python -m timesense.tests.test_en_fixes --fail-only
+      - name: Examples
+        run: python -m examples.basic_usage > /dev/null
+
+  typecheck:
+    # пакет помечен py.typed — аннотации должны проходить mypy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install mypy ruff
+      - run: mypy timesense --exclude 'timesense/tests' --ignore-missing-imports
+      - run: ruff check timesense --select F,E9 --ignore F401,F841
+
+  windows-no-tzdata:
+    # Windows без базы IANA: проверка fallback-поясов (МСК и др.) и extra [tz]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: python -m pytest -q timesense/tests/test_prod_fixes.py
+      - run: pip install -e ".[tz]"
+      - run: python -m pytest -q

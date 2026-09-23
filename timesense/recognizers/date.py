@@ -43,7 +43,7 @@ class DateRecognizer(Recognizer):
         if tokens[j].value.isdigit():
             h = int(tokens[j].value)
             if 0 <= h <= 23:
-                if 1 <= h <= 7:
+                if 1 <= h <= 7 and self.config.prefer_nearest_future:
                     h += 12
                 return (h, 0, j)
         return None
@@ -145,7 +145,11 @@ class DateRecognizer(Recognizer):
                 explicit_year = None
                 if month_tok + 1 < len(tokens) and tokens[month_tok + 1].value.isdigit():
                     yv = int(tokens[month_tok + 1].value)
-                    if 2020 <= yv <= 2100:
+                    # исторические даты тоже («12 апреля 1961 года»); но «10 октября 2000
+                    # рублей» — это сумма, а не год
+                    unit_after = (month_tok + 2 < len(tokens) and tokens[month_tok + 2].value.lower()
+                                  in ("рублей", "руб", "р", "долларов", "евро", "человек", "штук", "шт"))
+                    if 1900 <= yv <= 2199 and len(tokens[month_tok + 1].value) == 4 and not unit_after:
                         explicit_year = yv
                         end_i = month_tok + 1
                 if explicit_year is not None:

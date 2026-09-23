@@ -52,7 +52,7 @@ class OpenStartRecognizer(Recognizer):
         if nt.value.isdigit():
             h = int(nt.value)
             if 0 <= h <= 23:
-                if 1 <= h <= 7:
+                if 1 <= h <= 7 and self.config.prefer_nearest_future:
                     h += 12
                 df = now.replace(hour=h, minute=0, second=0, microsecond=0)
                 if self.config.prefer_nearest_future and df < now:

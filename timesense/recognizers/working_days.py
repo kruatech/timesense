@@ -19,13 +19,20 @@ class WorkingDaysRecognizer(Recognizer):
                 i += 1
         return results
 
+    def _is_working_day(self, d):
+        cal = getattr(self.config, "calendar", None)
+        if cal is not None:
+            return cal.is_working_day(d.date() if hasattr(d, "date") else d)
+        return d.weekday() < 5
+
     def _try_before_end_of_month(self, tokens, i, now):
-        """за N рабочих дн(я|ей) до конца месяца → отступить N рабочих дней
-        назад от последнего дня месяца (строго ДО него). Цель 09:00."""
+        """за N [рабочих] дн(я|ей) до конца месяца → отступить N (рабочих) дней
+        назад от последнего дня месяца (строго ДО него). Цель 09:00.
+        Рабочие дни учитывают WorkingCalendar (праздники, рабочие субботы)."""
         from calendar import monthrange
         if tokens[i].value.lower() != "за":
             return None
-        if i + 5 >= len(tokens):
+        if i + 4 >= len(tokens):
             return None
         num = (
             int(tokens[i + 1].value)
@@ -34,25 +41,30 @@ class WorkingDaysRecognizer(Recognizer):
         )
         if num is None:
             return None
-        if tokens[i + 2].value.lower() not in Keywords.WORKING:
+        # «за 2 рабочих дня …» или «за 2 дня …» (календарные)
+        business = tokens[i + 2].value.lower() in Keywords.WORKING
+        k = i + 3 if business else i + 2
+        if k + 2 >= len(tokens):
             return None
-        if tokens[i + 3].normalized not in Keywords.DAY and tokens[i + 3].value.lower() not in (
+        if tokens[k].normalized not in Keywords.DAY and tokens[k].value.lower() not in (
             "день",
             "дня",
             "дней",
         ):
             return None
         # «до конца месяца»
-        if tokens[i + 4].value.lower() not in Keywords.TIME_TO:
+        if tokens[k + 1].value.lower() not in Keywords.TIME_TO:
             return None
-        if tokens[i + 5].value.lower() not in ("конца", "конце", "конец"):
+        if tokens[k + 2].value.lower() not in ("конца", "конце", "конец"):
             return None
-        end_i = i + 5
-        if i + 6 < len(tokens) and (
-            tokens[i + 6].normalized in Keywords.MONTH
-            or tokens[i + 6].value.lower() in Keywords.MONTH
+        end_i = k + 2
+        if k + 3 < len(tokens) and (
+            tokens[k + 3].normalized in Keywords.MONTH
+            or tokens[k + 3].value.lower() in Keywords.MONTH
         ):
-            end_i = i + 6
+            end_i = k + 3
+        else:
+            return None  # «за 2 дня до конца недели/года» — не этот случай
         # последний день текущего месяца (если прошёл — следующий)
         year, month = now.year, now.month
         last = monthrange(year, month)[1]
@@ -65,12 +77,15 @@ class WorkingDaysRecognizer(Recognizer):
             month2 = (month2 - 1) % 12 + 1
             last2 = monthrange(year2, month2)[1]
             target = target.replace(year=year2, month=month2, day=last2)
-        # отступаем N рабочих дней строго назад
-        stepped = 0
-        while stepped < num:
-            target -= timedelta(days=1)
-            if target.weekday() < 5:
-                stepped += 1
+        # отступаем N (рабочих) дней строго назад
+        if business:
+            stepped = 0
+            while stepped < num:
+                target -= timedelta(days=1)
+                if self._is_working_day(target):
+                    stepped += 1
+        else:
+            target -= timedelta(days=num)
         dt = DateTimeToken(
             type=DateTimeType.SPAN_FORWARD,
             date_from=target,

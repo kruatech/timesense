@@ -30,7 +30,7 @@ def _fold(line: str) -> str:
     raw = line.encode("utf-8")
     if len(raw) <= 75:
         return line
-    chunks = []
+    chunks: List[bytes] = []
     cur = b""
     for ch in line:
         b = ch.encode("utf-8")
@@ -53,6 +53,77 @@ def _dt(value: datetime, *, date_only: bool = False) -> str:
     if date_only:
         return value.strftime("%Y%m%d")
     return value.strftime("%Y%m%dT%H%M%S")
+
+
+def _dt_prop(name: str, value: datetime, recurring: bool) -> str:
+    """DTSTART/DTEND с учётом пояса.
+
+    naive → floating-время (как раньше); aware с IANA-ключом у повторяющегося
+    события → TZID=<ключ> (серия не «плывёт» при переходе на летнее время);
+    прочие aware → UTC с Z.
+    """
+    if value.tzinfo is None:
+        return f"{name}:{_dt(value)}"
+    key = getattr(value.tzinfo, "key", None)
+    if recurring and key:
+        return f"{name};TZID={key}:{_dt(value)}"
+    return f"{name}:{_dt(value.astimezone(timezone.utc))}Z"
+
+
+def _fmt_offset(td: timedelta) -> str:
+    total = int(td.total_seconds())
+    sign = "+" if total >= 0 else "-"
+    total = abs(total)
+    return "%s%02d%02d" % (sign, total // 3600, (total % 3600) // 60)
+
+
+def _vtimezone(tz: Any, year: int) -> Optional[List[str]]:
+    """VTIMEZONE для IANA-пояса (RFC 5545 §3.6.5): переходы года вычисляются из
+    zoneinfo, правило — «N-е/последнее <день недели> месяца» (так их пишут
+    Google/Outlook). Без перехода на летнее время — один STANDARD."""
+    key = getattr(tz, "key", None)
+    if not key:
+        return None
+    from calendar import monthrange
+
+    def _off(moment: datetime) -> timedelta:
+        return moment.astimezone(tz).utcoffset() or timedelta(0)
+
+    day, hour = timedelta(days=1), timedelta(hours=1)
+    cur = datetime(year, 1, 1, tzinfo=timezone.utc)
+    prev = _off(cur)
+    trans = []
+    while cur.year == year:
+        nxt = cur + day
+        off = _off(nxt)
+        if off != prev:
+            h = cur
+            while h + hour <= nxt and _off(h + hour) == prev:
+                h += hour
+            at = h + hour
+            trans.append((at, prev, off, at.astimezone(tz).tzname() or key))
+            prev = off
+        cur = nxt
+    lines = ["BEGIN:VTIMEZONE", "TZID:%s" % key]
+    if not trans:
+        name = datetime(year, 1, 1, tzinfo=tz).tzname() or key
+        lines += ["BEGIN:STANDARD", "DTSTART:19700101T000000",
+                  "TZOFFSETFROM:%s" % _fmt_offset(prev), "TZOFFSETTO:%s" % _fmt_offset(prev),
+                  "TZNAME:%s" % name, "END:STANDARD"]
+    else:
+        codes = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
+        for at, off_from, off_to, name in trans:
+            local = (at + off_from).replace(tzinfo=None)  # стенное время ДО перехода
+            n = (local.day - 1) // 7 + 1
+            if local.day + 7 > monthrange(local.year, local.month)[1]:
+                n = -1  # последний такой день месяца
+            kind = "DAYLIGHT" if off_to > off_from else "STANDARD"
+            lines += ["BEGIN:%s" % kind, "DTSTART:%s" % local.strftime("%Y%m%dT%H%M%S"),
+                      "TZOFFSETFROM:%s" % _fmt_offset(off_from), "TZOFFSETTO:%s" % _fmt_offset(off_to),
+                      "RRULE:FREQ=YEARLY;BYMONTH=%d;BYDAY=%d%s" % (local.month, n, codes[local.weekday()]),
+                      "TZNAME:%s" % name, "END:%s" % kind]
+    lines.append("END:VTIMEZONE")
+    return lines
 
 
 def _uid(seed: str) -> str:
@@ -109,7 +180,7 @@ def _event_fields(result: Any) -> Optional[dict]:
     return None
 
 
-def _vevent(result: Any, stamp: datetime) -> Optional[List[str]]:
+def _vevent(result: Any, stamp: datetime, alarm_minutes: Optional[int] = None) -> Optional[List[str]]:
     f = _event_fields(result)
     if f is None:
         return None
@@ -118,40 +189,87 @@ def _vevent(result: Any, stamp: datetime) -> Optional[List[str]]:
     all_day = f["all_day"]
     lines = ["BEGIN:VEVENT"]
     lines.append(f"UID:{_uid(getattr(result, 'source', '') + str(start))}")
-    lines.append(f"DTSTAMP:{_dt(stamp)}")
+    # RFC 5545: DTSTAMP обязан быть в UTC (с Z)
+    lines.append(f"DTSTAMP:{_dt(stamp)}Z")
     if all_day:
         lines.append(f"DTSTART;VALUE=DATE:{_dt(start, date_only=True)}")
         # для all-day DTEND эксклюзивен → +1 день (или конец периода +1)
         end_day = (end or start) + timedelta(days=1)
         lines.append(f"DTEND;VALUE=DATE:{_dt(end_day, date_only=True)}")
     else:
-        lines.append(f"DTSTART:{_dt(start)}")
+        recurring = bool(f["rrule"])
+        lines.append(_dt_prop("DTSTART", start, recurring))
         if end is not None:
-            lines.append(f"DTEND:{_dt(end)}")
+            lines.append(_dt_prop("DTEND", end, recurring))
     if f["rrule"]:
-        lines.append(f"RRULE:{f['rrule']}")
+        rrule = f["rrule"]
+        if all_day:
+            # RFC 5545: тип UNTIL совпадает с DTSTART; у события на весь день — DATE
+            import re as _re
+
+            rrule = _re.sub(r"UNTIL=(\d{8})T\d{6}Z?", r"UNTIL=\1", rrule)
+        lines.append(f"RRULE:{rrule}")
+        # EXDATE того же типа, что DTSTART (RFC 5545 §3.8.5.1)
+        rec_obj = getattr(result, "recurrence", None)
+        for ex in (getattr(rec_obj, "exdates", None) or []):
+            if all_day:
+                lines.append(f"EXDATE;VALUE=DATE:{ex.strftime('%Y%m%d')}")
+            else:
+                lines.append(_dt_prop("EXDATE", ex, True))
     lines.append(f"SUMMARY:{_esc(f['title'])}")
     if f["location"]:
         lines.append(f"LOCATION:{_esc(f['location'])}")
+    if alarm_minutes is not None:
+        if alarm_minutes < 0:
+            raise ValueError("alarm_minutes must be >= 0")
+        lines += ["BEGIN:VALARM", "ACTION:DISPLAY", f"DESCRIPTION:{_esc(f['title'])}",
+                  f"TRIGGER:-PT{int(alarm_minutes)}M", "END:VALARM"]
     lines.append("END:VEVENT")
     return [_fold(ln) for ln in lines]
 
 
-def to_ics_calendar(results: Iterable[Any], *, stamp: Optional[datetime] = None) -> str:
-    """Несколько результатов → один VCALENDAR (.ics). Пустые/None пропускаются."""
-    # Наивный UTC (как раньше utcnow()), но без DeprecationWarning на 3.12+.
-    stamp = stamp or datetime.now(timezone.utc).replace(tzinfo=None)
+def _tz_of_recurring(result: Any):
+    """Пояс (IANA) повторяющегося aware-события — для VTIMEZONE."""
+    f = _event_fields(result)
+    if not f or not f["rrule"] or f["all_day"]:
+        return None, None
+    st = f["start"]
+    if st.tzinfo is None or not getattr(st.tzinfo, "key", None):
+        return None, None
+    return st.tzinfo, st.year
+
+
+def to_ics_calendar(
+    results: Iterable[Any], *, stamp: Optional[datetime] = None, alarm_minutes: Optional[int] = None
+) -> str:
+    """Несколько результатов → один VCALENDAR (.ics). Пустые/None пропускаются.
+
+    stamp — момент создания (DTSTAMP); naive считается UTC.
+    alarm_minutes — добавить напоминание (VALARM) за N минут до начала (0 — в момент начала).
+    """
+    if stamp is None:
+        stamp = datetime.now(timezone.utc).replace(tzinfo=None)
+    elif stamp.tzinfo is not None:
+        stamp = stamp.astimezone(timezone.utc).replace(tzinfo=None)
+    results = [r for r in results if r is not None]
     body: List[str] = ["BEGIN:VCALENDAR", "VERSION:2.0", f"PRODID:{_PRODID}", "CALSCALE:GREGORIAN"]
+    # VTIMEZONE для каждого IANA-пояса, на который ссылаются повторы с TZID
+    seen = set()
     for r in results:
-        if r is None:
-            continue
-        ev = _vevent(r, stamp)
+        tz, year = _tz_of_recurring(r)
+        if tz is not None and (tz.key, year) not in seen:
+            seen.add((tz.key, year))
+            vt = _vtimezone(tz, year)
+            if vt:
+                body.extend(_fold(ln) for ln in vt)
+    for r in results:
+        ev = _vevent(r, stamp, alarm_minutes)
         if ev:
             body.extend(ev)
     body.append("END:VCALENDAR")
     return "\r\n".join(body) + "\r\n"
 
 
-def to_ics(result: Any, *, stamp: Optional[datetime] = None) -> str:
+def to_ics(result: Any, *, stamp: Optional[datetime] = None, alarm_minutes: Optional[int] = None) -> str:
     """Один результат → .ics (VCALENDAR с одним VEVENT)."""
-    return to_ics_calendar([result], stamp=stamp)
+    return to_ics_calendar([result], stamp=stamp, alarm_minutes=alarm_minutes)

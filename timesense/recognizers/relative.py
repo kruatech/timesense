@@ -268,6 +268,10 @@ class RelativeRecognizer(Recognizer):
         # следом должно идти слово из PREVIOUS («назад»)
         if i + 1 >= len(tokens) or tokens[i + 1].value.lower() not in Keywords.PREVIOUS:
             return None
+        # «3 года назад» — это число + единица (другая ветка), а не «год назад»
+        if i > 0 and (tokens[i - 1].value.isdigit()
+                      or Keywords.parse_number_word(tokens[i - 1].value, self.morph) is not None):
+            return None
         target = None
         delta = None
         if nn in Keywords.DAY or nv in ["день", "дня", "дней"]:
@@ -320,6 +324,8 @@ class RelativeRecognizer(Recognizer):
                 delta = timedelta(minutes=fnum)
             elif un in Keywords.DAY or uv in ["день", "дня", "дней"]:
                 delta = timedelta(days=fnum)
+            elif un in Keywords.WEEK or uv in Keywords.WEEK:
+                delta = timedelta(weeks=fnum)
             if delta is not None:
                 target = now + delta
                 dt = DateTimeToken(
@@ -355,7 +361,10 @@ class RelativeRecognizer(Recognizer):
         delta = None
         target = None
         has_time = False
-        if un in Keywords.MINUTE or uv in ["минут", "минуты", "минуту", "мин"]:
+        if un in Keywords.SECOND or uv in Keywords.SECOND:
+            delta = timedelta(seconds=num)
+            has_time = True
+        elif un in Keywords.MINUTE or uv in ["минут", "минуты", "минуту", "мин"]:
             delta = timedelta(minutes=num)
             has_time = True
         elif un in Keywords.HOUR or uv in ["час", "часа", "часов"]:
@@ -413,9 +422,16 @@ class RelativeRecognizer(Recognizer):
             delta = timedelta(days=num)
         elif un in Keywords.WEEK or uv in ["неделю", "недели", "недель"]:
             delta = timedelta(weeks=num)
-        if delta is None:
+        target = None
+        # «3 месяца назад», «3 года назад» — календарно (раньше годы/месяцы не поддерживались)
+        if un in Keywords.MONTH or uv in ["месяц", "месяца", "месяцев"]:
+            target = self._add_months(now, -int(num))
+        elif un in Keywords.YEAR or uv in ["год", "года", "лет"]:
+            target = self._add_months(now, -int(num) * 12)
+        if delta is None and target is None:
             return None
-        target = now - delta
+        if target is None:
+            target = now - delta
         dt = DateTimeToken(
             type=DateTimeType.SPAN_BACKWARD,
             date_from=target,

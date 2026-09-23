@@ -16,6 +16,7 @@ class DeadlineSynonymRecognizer(Recognizer):
                 self._try_no_later(tokens, i, now)
                 or self._try_term(tokens, i, now)
                 or self._try_during(tokens, i, now)
+                or self._try_until_time(tokens, i, now)
             )
             if r:
                 results.append(r[0])
@@ -23,6 +24,107 @@ class DeadlineSynonymRecognizer(Recognizer):
             else:
                 i += 1
         return results
+
+    # «до полудня / до обеда / до вечера» → час дедлайна
+    _UNTIL_WORDS = {
+        "полудня": 12, "полдня": 12, "обеда": 13, "вечера": 18,
+    }
+    _UNTIL_STOP = None
+
+    def _until_stop(self):
+        if self._UNTIL_STOP is None:
+            stop = set()
+            for lst in (
+                Keywords.SECOND, Keywords.MINUTE, Keywords.HOUR, Keywords.DAY,
+                Keywords.WEEK, Keywords.MONTH, Keywords.YEAR,
+            ):
+                stop.update(lst)
+            for mw in Keywords.months():
+                stop.update(mw)
+            stop.update({"число", "числа", "раз", "раза", "человек", "штук", "лет", "градусов"})
+            stop.discard("часов")
+            stop.discard("ч")
+            type(self)._UNTIL_STOP = stop
+        return self._UNTIL_STOP
+
+    def _try_until_time(self, tokens, i, now):
+        """до 18 / до 18:00 / до 6 вечера / до полудня / до обеда → дедлайн по времени.
+
+        Не срабатывает на «до 20 марта», «до 5 минут», «до 18 лет», «до 20-го»
+        (обрабатываются другими распознавателями или не являются временем).
+        Диапазон «с 10 до 18» выигрывает в дедупликации (explicit range).
+        """
+        if i + 1 < len(tokens) and tokens[i].value.lower() == "перед":
+            # «перед обедом» ≈ до обеда
+            if tokens[i + 1].value.lower() in ("обедом",):
+                hour = 13
+                target = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+                if target <= now and self.config.prefer_nearest_future:
+                    target += timedelta(days=1)
+                dt = DateTimeToken(
+                    type=DateTimeType.FIXED, date_from=now, date_to=target, has_time=True,
+                    is_deadline=True, start=tokens[i].start, end=tokens[i + 1].end,
+                    confidence=1.0,
+                )
+                return (dt, 2)
+            return None
+        if tokens[i].value.lower() != "до" or i + 1 >= len(tokens):
+            return None
+        t = tokens[i + 1]
+        v = t.value.lower()
+        ei = i + 1
+        minute = 0
+        explicit = False
+        if v in self._UNTIL_WORDS:
+            hour = self._UNTIL_WORDS[v]
+            explicit = True
+        else:
+            m = re.match(r"^(\d{1,2})[:.](\d{2})$", v)
+            if m:
+                hour, minute = int(m.group(1)), int(m.group(2))
+                explicit = True
+            elif v.isdigit():
+                hour = int(v)
+            else:
+                return None
+            if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                return None
+            if ei + 1 < len(tokens):
+                nv = tokens[ei + 1].value.lower()
+                if nv in self._until_stop():
+                    return None
+                if nv in ("часов", "ч"):
+                    ei += 1
+                    if ei + 1 < len(tokens):
+                        nv = tokens[ei + 1].value.lower()
+                # «до 6 вечера / утра» — явная часть суток
+                if nv in ("вечера", "дня"):
+                    if hour < 12:
+                        hour += 12
+                    explicit = True
+                    ei += 1
+                elif nv in ("утра", "ночи"):
+                    if hour == 12:
+                        hour = 0
+                    explicit = True
+                    ei += 1
+            if not explicit and 1 <= hour <= 7 and self.config.prefer_nearest_future:
+                hour += 12  # «до 6» днём — это 18:00 (как и в остальном парсере)
+        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if target <= now and self.config.prefer_nearest_future:
+            target += timedelta(days=1)
+        dt = DateTimeToken(
+            type=DateTimeType.FIXED,
+            date_from=now,
+            date_to=target,
+            has_time=True,
+            is_deadline=True,
+            start=tokens[i].start,
+            end=tokens[ei].end,
+            confidence=1.0,
+        )
+        dt._deadline_time = (hour, minute)
+        return (dt, ei - i + 1)
 
     def _try_during(self, tokens, i, now):
         """в течение часа / в течение 2 дней — дедлайн = now + Δ"""
@@ -35,6 +137,9 @@ class DeadlineSynonymRecognizer(Recognizer):
         if j >= len(tokens):
             return None
         num = 1
+        explicit_num = tokens[j].value.isdigit() or (
+            Keywords.parse_number_word(tokens[j].value, self.morph) is not None
+        )
         if tokens[j].value.isdigit():
             num = int(tokens[j].value)
             j += 1
@@ -56,6 +161,13 @@ class DeadlineSynonymRecognizer(Recognizer):
         else:
             return None
         target = now + delta
+        # «в течение дня / недели» без числа — до конца текущего дня / недели
+        if not explicit_num and delta == timedelta(days=1):
+            target = now.replace(hour=23, minute=59, second=0, microsecond=0)
+        elif not explicit_num and delta == timedelta(weeks=1):
+            target = (now + timedelta(days=6 - now.weekday())).replace(
+                hour=23, minute=59, second=0, microsecond=0
+            )
         dt = DateTimeToken(
             type=DateTimeType.FIXED,
             date_from=now,

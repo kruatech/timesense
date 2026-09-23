@@ -68,9 +68,26 @@ def example_task_types():
     print()
 
 
+def example_english():
+    print("=== English ===")
+    for t in [
+        "remind me tomorrow at 9am to call mom",
+        "every weekday at 9 standup",
+        "from 10 to 11:30 sync in the meeting room",
+        "by eod send the report",
+        "next week on Wednesday at 3pm dentist",
+        "this weekend cottage",
+        "in October vacation",
+        "after lunch call the bank",
+    ]:
+        show(t)
+    print()
+
+
 if __name__ == "__main__":
     example_basic()
     example_dates()
     example_ranges_and_recurrence()
     example_to_dict()
     example_task_types()
+    example_english()

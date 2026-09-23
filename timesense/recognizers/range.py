@@ -177,12 +177,12 @@ class RangeRecognizer(Recognizer):
         if tt.value.isdigit():
             h = int(tt.value)
             if 0 <= h <= 23:
-                if 1 <= h <= 7:
+                if 1 <= h <= 7 and self.config.prefer_nearest_future:
                     h += 12
                 return (h, 0, start + 1)
         h = Keywords.parse_number_word(tt.value, self.morph)
         if h is not None and 0 <= h <= 23:
-            if 1 <= h <= 7:
+            if 1 <= h <= 7 and self.config.prefer_nearest_future:
                 h += 12
             return (h, 0, start + 1)
         return None
@@ -492,11 +492,13 @@ class RangeRecognizer(Recognizer):
         dt.is_explicit_range = True
         return (dt, 4)
 
-    @staticmethod
-    def _ampm_pair(h1, h2):
+    def _ampm_pair(self, h1, h2):
         """AM/PM для пары часов диапазона. Ночной переход через полночь
         (старт вечером/ночью, конец 1-7) оставляет конец буквальным —
-        он попадёт на следующий день при e<=s."""
+        он попадёт на следующий день при e<=s. При prefer_nearest_future=False
+        часы берутся буквально (как в EN-локали)."""
+        if not self.config.prefer_nearest_future:
+            return h1, h2
         night = h1 >= 18 and 1 <= h2 <= 7
         a1 = h1 + 12 if 1 <= h1 <= 7 else h1
         a2 = h2 if night else (h2 + 12 if 1 <= h2 <= 7 else h2)

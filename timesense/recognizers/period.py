@@ -337,6 +337,14 @@ class PeriodRecognizer(Recognizer):
             return (datetime(now.year, 1, 1), datetime(now.year, 12, 31, 23, 59))
         return None
 
+    def _next_period(self, unit, s_full, e_full):
+        """Следующий период того же вида после (s_full, e_full)."""
+        if unit == "week":
+            return self._week_bounds(s_full + timedelta(weeks=1))
+        if unit == "year":
+            return (datetime(s_full.year + 1, 1, 1), datetime(s_full.year + 1, 12, 31, 23, 59))
+        return self._period_bounds(unit, e_full + timedelta(days=1))
+
     def _part_window(self, unit, part, s_full, e_full):
         """Окно начала/середины/конца внутри периода."""
         if unit == "day":
@@ -351,16 +359,16 @@ class PeriodRecognizer(Recognizer):
             pad = 1
         elif unit == "month":
             pad = 4
-        else:  # quarter, year
-            pad = max(9, span // 9)
+        else:  # quarter, year — окно как в EN-локали (9 дней)
+            pad = 9
         if part == "start":
             return s_full, (s_full + timedelta(days=pad)).replace(hour=23, minute=59)
         if part == "end":
             return (e_full - timedelta(days=pad)).replace(hour=0, minute=0), e_full
         mid = s_full + (e_full - s_full) / 2
         return (
-            (mid - timedelta(days=pad // 2 + 1)).replace(hour=0, minute=0),
-            (mid + timedelta(days=pad // 2 + 1)).replace(hour=23, minute=59),
+            (mid - timedelta(days=pad // 2 + 1)).replace(hour=0, minute=0, second=0, microsecond=0),
+            (mid + timedelta(days=pad // 2 + 1)).replace(hour=23, minute=59, second=0, microsecond=0),
         )
 
     def _try_part_of_month(self, tokens, i, now):
@@ -417,6 +425,7 @@ class PeriodRecognizer(Recognizer):
         if unit == "day" and not lead_deadline:
             return None
 
+        named_unit = unit != "named_month"  # «в начале месяца», а не «в начале сентября»
         if unit == "named_month":
             from calendar import monthrange
 
@@ -459,6 +468,12 @@ class PeriodRecognizer(Recognizer):
             )
 
         s, e = self._part_window(unit, part, s_full, e_full)
+        # Ближайшее будущее и для части периода: «в начале месяца» 22-го числа —
+        # это начало следующего месяца (как «в конце месяца» 22-го — конец текущего).
+        # Названный месяц и явные «этого/прошлого/следующего» сюда не попадают.
+        if self.config.prefer_nearest_future and named_unit and e < now:
+            s_full, e_full = self._next_period(unit, s_full, e_full)
+            s, e = self._part_window(unit, part, s_full, e_full)
         return (
             DateTimeToken(
                 type=DateTimeType.PERIOD,

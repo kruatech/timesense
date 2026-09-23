@@ -134,7 +134,7 @@ class WeekdayModifierRecognizer(Recognizer):
                 if tt.value.isdigit():
                     h = int(tt.value)
                     if 0 <= h <= 23:
-                        if 1 <= h <= 7:
+                        if 1 <= h <= 7 and self.config.prefer_nearest_future:
                             h += 12
                         target = target.replace(hour=h)
                         ht = True

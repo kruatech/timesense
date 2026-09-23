@@ -752,7 +752,7 @@ def build_tests():
         s,
         "every forty five minutes",
         "every forty five minutes break",
-        "TaskResult",
+        "ReminderResult",  # паритет с RU «каждые N минут» → напоминание
         lambda r: r.recurrence
         and r.recurrence.frequency == "MINUTELY"
         and r.recurrence.interval == 45,
@@ -761,7 +761,7 @@ def build_tests():
         s,
         "every thirty minutes",
         "every thirty minutes standup",
-        "TaskResult",
+        "ReminderResult",  # паритет с RU «каждые N минут» → напоминание
         lambda r: r.recurrence
         and r.recurrence.frequency == "MINUTELY"
         and r.recurrence.interval == 30,

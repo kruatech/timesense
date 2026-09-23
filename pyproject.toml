@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "timesense"
-version = "1.0.0"
-description = "Natural-language date/time & event parser for Russian (and English)"
+version = "1.1.0"
+description = "Natural-language date/time & event parser for English and Russian"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Anton Krutilin", email = "a@krutilin.pro" }]
-keywords = ["nlp", "calendar", "parser", "russian", "datetime", "natural-language"]
+keywords = ["nlp", "calendar", "parser", "english", "russian", "datetime", "natural-language", "reminders", "rrule", "ics"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
@@ -23,15 +23,22 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Natural Language :: Russian",
     "Natural Language :: English",
 ]
 # Без обязательных зависимостей — чистый Python.
 dependencies = []
 
+[project.scripts]
+# командная строка: `timesense "завтра в 10 встреча"` (то же, что `python -m timesense`)
+timesense = "timesense.__main__:main"
+
 [project.optional-dependencies]
 morph = ["pymorphy3>=1.2.0", "pymorphy3-dicts-ru>=2.4.0"]
-dev = ["pytest>=7.0.0", "pytest-cov>=4.0.0", "black>=22.0.0", "flake8>=5.0.0"]
+# база часовых поясов IANA для систем без неё (Windows, часть slim-образов)
+tz = ["tzdata"]
+dev = ["pytest>=7.0.0", "pytest-cov>=4.0.0", "black>=22.0.0", "flake8>=5.0.0", "python-dateutil>=2.8", "mypy>=1.0", "ruff>=0.4"]
 
 [project.urls]
 Homepage = "https://github.com/kruatech/timesense"
@@ -47,7 +54,7 @@ exclude = ["timesense.tests*"]
 
 [tool.pytest.ini_options]
 testpaths = ["timesense/tests"]
-python_files = ["test_suite.py", "test_en.py", "test_stress_ru_500.py", "test_stress_en_500.py", "test_regression_fixes.py"]
+python_files = ["test_suite.py", "test_en.py", "test_stress_ru_500.py", "test_stress_en_500.py", "test_regression_fixes.py", "test_prod_fixes.py", "test_robustness.py", "test_parity.py", "test_hard_cases.py", "test_docs.py", "test_super_hard.py", "test_past.py"]
 
 [tool.setuptools.package-data]
 timesense = ["py.typed"]

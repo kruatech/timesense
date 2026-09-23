@@ -31,6 +31,11 @@ class RecurrenceRule:
         self.until = until
         self.count = count
         self.by_set_pos = by_set_pos  # BYSETPOS (напр. -1 = последний из BYDAY-набора)
+        # EXDATE: исключённые вхождения («каждый день кроме 31 декабря»). В RRULE не входят —
+        # в .ics это отдельное свойство EXDATE.
+        self.exdates = []
+        # BYHOUR: окно часов для частых повторов («каждые 30 минут с 9 до 18»)
+        self.by_hour = []
 
     def to_rrule(self):
         parts = ["FREQ=" + self.frequency]
@@ -44,10 +49,18 @@ class RecurrenceRule:
             parts.append("BYMONTHDAY=" + ",".join(str(d) for d in self.by_month_day))
         if self.by_set_pos is not None:
             parts.append("BYSETPOS=" + str(self.by_set_pos))
+        if getattr(self, "by_hour", None):
+            parts.append("BYHOUR=" + ",".join(str(h) for h in self.by_hour))
         if self.until:
-            parts.append(
-                "UNTIL=" + self.until.strftime("%Y%m%dT%H%M%S")
-            )  # naive: без Z (UTC не заявляем)
+            if self.until.tzinfo is not None:
+                # aware → UTC с Z (RFC 5545: UNTIL в UTC при DTSTART с поясом)
+                from datetime import timezone as _tz
+
+                parts.append("UNTIL=" + self.until.astimezone(_tz.utc).strftime("%Y%m%dT%H%M%SZ"))
+            else:
+                parts.append(
+                    "UNTIL=" + self.until.strftime("%Y%m%dT%H%M%S")
+                )  # naive: без Z (UTC не заявляем)
         if self.count:
             parts.append("COUNT=" + str(self.count))
         return ";".join(parts)
@@ -65,6 +78,10 @@ class RecurrenceRule:
             d["by_month"] = self.by_month
         if self.by_month_day:
             d["by_month_day"] = self.by_month_day
+        if self.exdates:
+            d["exdates"] = [x.isoformat() for x in self.exdates]
+        if getattr(self, "by_hour", None):
+            d["by_hour"] = self.by_hour
         return d
 
 

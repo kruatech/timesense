@@ -102,7 +102,9 @@ def test_en_ambiguous_last_period_none(parser, text):
 def test_en_last_week_on_weekday_productive(parser):
     d = _d(parser, "last week on Thursday at 11:25 prepare a client email", "en")
     assert d is not None
-    assert d["datetime"].startswith("2026-06-29T11:25")
+    # NOW = пн 06.07.2026 → четверг прошлой недели = 02.07 (раньше тест ожидал
+    # 29.06 — это понедельник: день недели терялся)
+    assert d["datetime"].startswith("2026-07-02T11:25")
     assert d["is_past"] is True
 
 
@@ -334,7 +336,9 @@ def test_en_no_later_than_is_deadline(parser):
 def test_en_business_days_before_end_of_month(parser):
     d = _d(parser, "two business days before end of month remind about closing documents", "en")
     assert d is not None
-    assert d.get("deadline", "")[:10] == "2026-07-29", d.get("deadline")
+    # как в RU (BUG-242): момент, когда напомнить, — начало дня 29.07, а не дедлайн
+    dt = d.get("datetime") or d.get("start")
+    assert dt is not None and dt[:10] == "2026-07-29", dt
 
 
 # ── RU BUG-R2: предложные фразы сохраняются целиком ──

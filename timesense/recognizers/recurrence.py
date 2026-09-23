@@ -25,6 +25,23 @@ class RecurrenceRecognizer(Recognizer):
                     if add > 0:
                         dt0.end = tokens[i + cons + add - 1].end  # съесть «5 раз»/«до …» в title
                         cons += add
+                    elif dt0.recurrence.until is None and dt0.recurrence.count is None:
+                        # модификатор между правилом и временем («каждый день до конца месяца в 9»)
+                        # или после названия («… синк до конца года», «… созвон 5 раз»);
+                        # внутри/после — только «до …» и «N раз» («по понедельникам» — дни правила)
+                        for k in range(i + 1, min(len(tokens), i + cons + 4)):
+                            v = tokens[k].value.lower()
+                            is_count = (k + 1 < len(tokens)
+                                        and tokens[k + 1].value.lower() in ("раз", "раза"))
+                            if v != "до" and not is_count:
+                                continue
+                            eaten = self._scan_count_until(tokens, k, dt0.recurrence, now)
+                            if eaten > 0:
+                                if k >= i + cons:
+                                    # модификатор после названия — занятый участок, не title
+                                    dt0.used_spans = [(dt0.start, dt0.end),
+                                                      (tokens[k].start, tokens[k + eaten - 1].end)]
+                                break
                 results.append(dt0)
                 i += cons
             else:
@@ -47,6 +64,10 @@ class RecurrenceRecognizer(Recognizer):
                 rec.count = num
                 return ncons + 1
         # UNTIL: «до ...»
+        # «по субботам», «по понедельникам» — это дни правила (мн. ч. дательный), а не UNTIL
+        if (tokens[s].value.lower() == "по" and s + 1 < len(tokens)
+                and tokens[s + 1].value.lower().endswith(("ам", "ям"))):
+            return 0
         if tokens[s].value.lower() in ("до", "по") and s + 1 < len(tokens):
             j = s + 1
             # до конца месяца / недели
@@ -61,6 +82,17 @@ class RecurrenceRecognizer(Recognizer):
                     end = now + timedelta(days=(6 - now.weekday()))
                     rec.until = end.replace(hour=23, minute=59, second=0, microsecond=0)
                     return (j + 1) - s + 1
+                if wn in Keywords.YEAR or what in ("года", "год"):
+                    rec.until = now.replace(month=12, day=31, hour=23, minute=59,
+                                            second=0, microsecond=0)
+                    return (j + 1) - s + 1
+                # до конца октября → последний день ближайшего октября
+                for mi, forms in enumerate(Keywords.months()):
+                    if what in forms or wn in forms:
+                        mon = mi + 1
+                        y = now.year if mon >= now.month else now.year + 1
+                        rec.until = datetime(y, mon, monthrange(y, mon)[1], 23, 59)
+                        return (j + 1) - s + 1
             # до <день недели>
             for wi, days in enumerate(Keywords.days_of_week() + Keywords.days_of_week_dative()):
                 if tokens[j].value.lower() in days or tokens[j].normalized in days:
@@ -156,13 +188,32 @@ class RecurrenceRecognizer(Recognizer):
         nv = nt.value.lower()
         nn = nt.normalized
         # каждый <день недели>
+        def _wd_of(tok):
+            for k, ds in enumerate(Keywords.days_of_week()):
+                if tok.normalized in ds or tok.value.lower() in ds:
+                    return k
+            return None
+
         for wi, days in enumerate(Keywords.days_of_week()):
             if nn in days or nv in days:
-                rec = RecurrenceRule(frequency="WEEKLY", by_day=[Keywords.RRULE_DAYS[wi]])
+                # «каждый понедельник и среду», «каждый пн, ср и пт»
+                wds, j = [wi], i + 2
+                while j < len(tokens):
+                    if tokens[j].value.lower() == "и" and j + 1 < len(tokens) and _wd_of(tokens[j + 1]) is not None:
+                        wds.append(_wd_of(tokens[j + 1]))
+                        j += 2
+                    elif _wd_of(tokens[j]) is not None:
+                        wds.append(_wd_of(tokens[j]))
+                        j += 1
+                    else:
+                        break
+                wds = sorted(set(wds))
+                nt = tokens[j - 1]
+                rec = RecurrenceRule(frequency="WEEKLY", by_day=[Keywords.RRULE_DAYS[k] for k in wds])
                 target = now + timedelta(days=((wi - now.weekday()) % 7) or 7)
                 target = target.replace(hour=9, minute=0, second=0, microsecond=0)
                 # Ищем время ИЛИ диапазон после дня недели
-                range_r = self._find_range(tokens, i + 2, now)
+                range_r = self._find_range(tokens, j, now)
                 if range_r:
                     sh, sm, eh, em, ei = range_r
                     target = target.replace(hour=sh, minute=sm)
@@ -181,7 +232,7 @@ class RecurrenceRecognizer(Recognizer):
                     )
                     dt.is_explicit_range = True
                     return (dt, ei - i + 1)
-                h, m, ht, ei = self._find_time(tokens, i + 2, now)
+                h, m, ht, ei = self._find_time(tokens, j, now)
                 if ht:
                     target = target.replace(hour=h, minute=m)
                 return (
@@ -196,7 +247,7 @@ class RecurrenceRecognizer(Recognizer):
                         end=tokens[ei].end if ht else nt.end,
                         confidence=0.95,
                     ),
-                    ei - i + 1 if ht else 2,
+                    ei - i + 1 if ht else j - i,
                 )
         # каждый будний день → WEEKLY BYDAY=MO..FR
         if nn == "будний" or nv in Keywords.WEEKDAYS:
@@ -296,11 +347,39 @@ class RecurrenceRecognizer(Recognizer):
         if nn in Keywords.MONTH or nv in ["месяц", "месяца"]:
             rec = RecurrenceRule(frequency="MONTHLY")
             end_i = i + 1
+            start_i = i
             # «каждый месяц 15 числа» → BYMONTHDAY=15
             md, mdi = self._find_month_day(tokens, i + 2)
             if md is not None:
                 rec.by_month_day = [md]
                 end_i = mdi
+            elif any(
+                tokens[k].value.lower() in ("последний", "последнее", "последнего")
+                and k + 1 < len(tokens) and tokens[k + 1].value.lower() in ("день", "число", "числа")
+                for k in range(i + 2, min(i + 5, len(tokens) - 1))
+            ):
+                from calendar import monthrange as _mr
+
+                rec.by_month_day = [-1]
+                k = next(k for k in range(i + 2, min(i + 5, len(tokens) - 1))
+                         if tokens[k].value.lower() in ("последний", "последнее", "последнего"))
+                end_i = k + 1
+                last = now.replace(day=_mr(now.year, now.month)[1], hour=0, minute=0,
+                                   second=0, microsecond=0)
+                return (
+                    DateTimeToken(
+                        type=DateTimeType.FIXED, date_from=last, date_to=last, has_time=False,
+                        all_day=True, recurrence=rec, start=tokens[i].start,
+                        end=tokens[end_i].end, confidence=0.9,
+                    ),
+                    end_i - i + 1,
+                )
+            else:
+                # «1 числа каждого месяца», «первого числа каждого месяца»
+                md_b = self._month_day_before(tokens, i)
+                if md_b is not None:
+                    rec.by_month_day = [md_b[0]]
+                    start_i = md_b[1]
             return (
                 DateTimeToken(
                     type=DateTimeType.FIXED,
@@ -309,7 +388,7 @@ class RecurrenceRecognizer(Recognizer):
                     has_time=False,
                     all_day=True,
                     recurrence=rec,
-                    start=tokens[i].start,
+                    start=tokens[start_i].start,
                     end=tokens[end_i].end,
                     confidence=0.9,
                 ),
@@ -441,6 +520,20 @@ class RecurrenceRecognizer(Recognizer):
                         ui - i + 1,
                     )
         return None
+
+    @staticmethod
+    def _month_day_before(tokens, i):
+        """«N числа» / «<порядковое> числа» прямо перед tokens[i] → (day, index_of_N)."""
+        if i < 2:
+            return None
+        num_t, ch_t = tokens[i - 2], tokens[i - 1]
+        if not (ch_t.normalized == "число" or ch_t.value.lower() in ("число", "числа")):
+            return None
+        v = num_t.value.lower()
+        d = int(v) if v.isdigit() else Keywords.parse_ordinal_day(v)
+        if d is None or not (1 <= d <= 31):
+            return None
+        return d, i - 2
 
     def _find_month_day(self, tokens, start):
         """N числа/число → (day, index) для BYMONTHDAY."""
@@ -584,6 +677,12 @@ class RecurrenceRecognizer(Recognizer):
             )
         if nn in Keywords.MONTH or nv in ["месяц", "месяца"]:
             rec = RecurrenceRule(frequency="MONTHLY")
+            end_tok, used = nt, 3
+            # «раз в месяц 5 числа» → BYMONTHDAY=5
+            md, mdi = self._find_month_day(tokens, i + 3)
+            if md is not None:
+                rec.by_month_day = [md]
+                end_tok, used = tokens[mdi], mdi - i + 1
             return (
                 DateTimeToken(
                     type=DateTimeType.FIXED,
@@ -593,14 +692,38 @@ class RecurrenceRecognizer(Recognizer):
                     all_day=True,
                     recurrence=rec,
                     start=tokens[i].start,
-                    end=nt.end,
+                    end=end_tok.end,
                     confidence=0.85,
                 ),
-                3,
+                used,
             )
         num = int(nv) if nt.value.isdigit() else Keywords.parse_number_word(nv, self.morph)
+        if num is None:
+            # «две», «три» — через общий разбор количественных (как «каждые две недели»)
+            num, _c = Keywords.parse_cardinal(tokens, i + 2, self.morph)
+            if _c != 1:
+                num = None
         if num and i + 3 < len(tokens):
             ut = tokens[i + 3]
+            # «раз в две недели», «раз в 3 месяца»
+            for units, freq in ((Keywords.WEEK, "WEEKLY"), (Keywords.MONTH, "MONTHLY"),
+                                (Keywords.YEAR, "YEARLY")):
+                if ut.normalized in units or ut.value.lower() in units:
+                    rec = RecurrenceRule(frequency=freq, interval=num)
+                    return (
+                        DateTimeToken(
+                            type=DateTimeType.FIXED,
+                            date_from=now,
+                            date_to=now,
+                            has_time=False,
+                            all_day=True,
+                            recurrence=rec,
+                            start=tokens[i].start,
+                            end=ut.end,
+                            confidence=0.85,
+                        ),
+                        4,
+                    )
             if ut.normalized in Keywords.DAY or ut.value.lower() in ["день", "дня", "дней"]:
                 rec = RecurrenceRule(frequency="DAILY", interval=num)
                 return (
@@ -619,19 +742,62 @@ class RecurrenceRecognizer(Recognizer):
                 )
         return None
 
+    _POD_AFTER = {"утра": "morning", "дня": "day", "вечера": "evening", "ночи": "night"}
+    _POD_BEFORE = {"утром": "morning", "днём": "day", "днем": "day", "вечером": "evening",
+                   "ночью": "night"}
+
+    @staticmethod
+    def _pod_hour(h, part):
+        if part == "morning":
+            return 0 if h == 12 else h
+        if part in ("day", "evening"):
+            return h + 12 if 1 <= h <= 11 else h
+        if part == "night":
+            if h == 12:
+                return 0
+            return h + 12 if 7 <= h <= 11 else h
+        return h
+
+    @staticmethod
+    def _is_month_or_day_word(tok):
+        v, n = tok.value.lower(), tok.normalized
+        if v in ("числа", "число", "числу"):
+            return True
+        return any(v in forms or n in forms for forms in Keywords.months())
+
     def _find_time(self, tokens, start, now):
         for j in range(start, min(start + 4, len(tokens))):
             if tokens[j].normalized in Keywords.TIME_FROM and j + 1 < len(tokens):
                 tt = tokens[j + 1]
+                # «с 1 октября», «с 1 по 10 октября» — это даты, а не «с 1 часа»
+                if j + 2 < len(tokens) and self._is_month_or_day_word(tokens[j + 2]):
+                    continue
+                # только «с/со <число> по/до <число> <месяц>» (не «в 9:15 до конца октября»)
+                if (j + 4 < len(tokens) and tokens[j].value.lower() in ("с", "со")
+                        and tt.value.isdigit() and tokens[j + 2].normalized in Keywords.TIME_TO
+                        and tokens[j + 3].value.isdigit()
+                        and self._is_month_or_day_word(tokens[j + 4])):
+                    continue
+                # часть суток: «в 7 утра» (после) или «утром в 7» (перед)
+                part, end = None, j + 1
+                if j + 2 < len(tokens) and tokens[j + 2].value.lower() in self._POD_AFTER:
+                    part, end = self._POD_AFTER[tokens[j + 2].value.lower()], j + 2
+                elif j - 1 >= 0 and tokens[j - 1].value.lower() in self._POD_BEFORE:
+                    part = self._POD_BEFORE[tokens[j - 1].value.lower()]
                 m = re.match(r"(\d{1,2})[:.-](\d{2})", tt.value)
                 if m:
-                    return (int(m.group(1)), int(m.group(2)), True, j + 1)
+                    h = int(m.group(1))
+                    if part:
+                        h = self._pod_hour(h, part)
+                    return (h, int(m.group(2)), True, end)
                 if tt.value.isdigit():
                     h = int(tt.value)
                     if 0 <= h <= 23:
-                        if 1 <= h <= 7:
+                        if part:
+                            h = self._pod_hour(h, part)
+                        elif 1 <= h <= 7 and self.config.prefer_nearest_future:
                             h += 12
-                        return (h, 0, True, j + 1)
+                        return (h, 0, True, end)
         return (0, 0, False, start)
 
     def _find_range(self, tokens, start, now):
@@ -645,9 +811,9 @@ class RecurrenceRecognizer(Recognizer):
                 h2 = int(m.group(3))
                 m2 = int(m.group(4)) if m.group(4) else 0
                 if 0 <= h1 <= 23 and 0 <= h2 <= 23:
-                    if 1 <= h1 <= 7:
+                    if 1 <= h1 <= 7 and self.config.prefer_nearest_future:
                         h1 += 12
-                    if 1 <= h2 <= 7:
+                    if 1 <= h2 <= 7 and self.config.prefer_nearest_future:
                         h2 += 12
                     return (h1, m1, h2, m2, j)
             # "с X до Y"
@@ -657,10 +823,14 @@ class RecurrenceRecognizer(Recognizer):
                     di = ci + 1
                     if di < len(tokens) and tokens[di].normalized in Keywords.TIME_TO:
                         h2, m2_v, ei = self._parse_tv(tokens, di + 1)
+                        # «с 1 по 10 октября» — диапазон дат, а не часов
+                        if h2 is not None and ei + 1 < len(tokens) \
+                                and self._is_month_or_day_word(tokens[ei + 1]):
+                            h2 = None
                         if h2 is not None:
-                            if 1 <= h1 <= 7:
+                            if 1 <= h1 <= 7 and self.config.prefer_nearest_future:
                                 h1 += 12
-                            if 1 <= h2 <= 7:
+                            if 1 <= h2 <= 7 and self.config.prefer_nearest_future:
                                 h2 += 12
                             return (h1, m1_v, h2, m2_v, ei)
         return None

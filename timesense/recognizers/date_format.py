@@ -60,7 +60,7 @@ class DateFormatRecognizer(Recognizer):
         )
 
     def _mk(self, d, mo, y, now, t):
-        if not (1 <= mo <= 12 and 2000 <= y <= 2100):
+        if not (1 <= mo <= 12 and 1900 <= y <= 2199):
             return None
         target = self._safe(d, mo, y)
         return self._token(target, now, t) if target is not None else None

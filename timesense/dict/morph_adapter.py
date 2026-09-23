@@ -10,10 +10,20 @@
 """
 
 
+import os
+
+
+def _env_morph_disabled():
+    v = os.environ.get("TIMESENSE_MORPH", "").strip().lower()
+    return v in ("0", "false", "no", "off")
+
+
 class MorphAdapter:
-    def __init__(self):
+    def __init__(self, enabled=True):
         self.morph = None
         self.available = False
+        if not enabled:
+            return
         for mod_name in ("pymorphy3", "pymorphy2"):
             try:
                 mod = __import__(mod_name)
@@ -41,10 +51,22 @@ class MorphAdapter:
 
 
 _morph_adapter = None
+_plain_adapter = None
 
 
-def get_morph():
-    global _morph_adapter
+def get_morph(enabled=None):
+    """Общий адаптер морфологии.
+
+    enabled=None  — авто: pymorphy3/pymorphy2, если установлен и не выключен
+                    переменной окружения TIMESENSE_MORPH=0;
+    enabled=False — без морфологии (быстрее в ~5 раз, меньше памяти);
+    enabled=True  — попытаться подключить морфологию.
+    """
+    global _morph_adapter, _plain_adapter
+    if enabled is False or (enabled is None and _env_morph_disabled()):
+        if _plain_adapter is None:
+            _plain_adapter = MorphAdapter(enabled=False)
+        return _plain_adapter
     if _morph_adapter is None:
         _morph_adapter = MorphAdapter()
     return _morph_adapter

@@ -16,7 +16,7 @@ class TimeRecognizer(Recognizer):
 
     def __init__(self, config):
         super().__init__(config)
-        self.morph = get_morph()
+        self.morph = get_morph(getattr(config, "use_morph", None))
 
     def recognize(self, tokens, now):
         results = []
@@ -191,7 +191,7 @@ class TimeRecognizer(Recognizer):
                 )
             if nv in ["полночь", "полуночи"]:
                 dt = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-                return DateTimeToken(
+                tok = DateTimeToken(
                     type=DateTimeType.FIXED,
                     date_from=dt,
                     date_to=dt,
@@ -199,6 +199,8 @@ class TimeRecognizer(Recognizer):
                     start=tokens[start].start,
                     end=tokens[start + 1].end,
                 )
+                tok._midnight = True
+                return tok
             if nv in ["утро", "утру", "утра"]:
                 dt = now.replace(hour=9, minute=0, second=0, microsecond=0)
                 if dt < now:
@@ -383,7 +385,7 @@ class TimeRecognizer(Recognizer):
         """
         if pod:
             return self._apply_pod(h, pod)
-        if 1 <= h <= 7:
+        if 1 <= h <= 7 and self.config.prefer_nearest_future:
             return h + 12
         return h
 
@@ -638,7 +640,7 @@ class TimeRecognizer(Recognizer):
         else:
             return None
         dt = self._mk(now, h, 0)
-        return DateTimeToken(
+        tok = DateTimeToken(
             type=DateTimeType.FIXED,
             date_from=dt,
             date_to=dt,
@@ -646,3 +648,6 @@ class TimeRecognizer(Recognizer):
             start=tokens[s].start,
             end=tokens[s].end,
         )
+        if h == 0:
+            tok._midnight = True
+        return tok

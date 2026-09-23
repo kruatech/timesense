@@ -14,8 +14,9 @@ from .models.event_types import (
 from .models.datetime_token import DateTimeToken, DateTimeType, RecurrenceRule
 from .models.token import TextToken
 from .ics import to_ics, to_ics_calendar
+from .core.analysis import ParseAnalysis, ParseStatus
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __all__ = [
     "TimeSenseParser",
     "TimeConfig",
@@ -32,4 +33,6 @@ __all__ = [
     "TextToken",
     "to_ics",
     "to_ics_calendar",
+    "ParseAnalysis",
+    "ParseStatus",
 ]

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 if TYPE_CHECKING:
     from .calendar import WorkingCalendar
@@ -21,11 +21,30 @@ class TimeConfig:
         merge_distance: int = 50,
         default_language: str = "auto",
         calendar: Optional[WorkingCalendar] = None,
+        use_morph: Optional[bool] = None,
+        max_text_length: Optional[int] = 1000,
+        default_tz: Optional[Any] = None,
     ) -> None:
         self.prefer_nearest_future = prefer_nearest_future
         self.default_hour_for_one = default_hour_for_one
         self.timezone = timezone
         self.merge_distance = merge_distance
+        # Морфология: None — авто (pymorphy3, если установлен; TIMESENSE_MORPH=0
+        # выключает), False — без неё (быстрее и легче), True — попытаться включить.
+        self.use_morph = use_morph
+        # Защита от тяжёлого ввода: длиннее → parse() возвращает None.
+        # None/0 — без ограничения.
+        if max_text_length is not None and max_text_length < 0:
+            raise ValueError("max_text_length must be >= 0 or None")
+        self.max_text_length = max_text_length
+        # Пояс пользователя по умолчанию ('Europe/Moscow' или tzinfo): применяется,
+        # когда в parse() не передан tz. None — naive-режим (как раньше).
+        # Параметр timezone выше исторический и НЕ применяется — используйте default_tz.
+        if default_tz is not None:
+            from .tz import resolve_tz
+
+            resolve_tz(default_tz)  # ранняя проверка: неизвестный пояс → ValueError
+        self.default_tz = default_tz
         # Производственный календарь (праздники/перенесённые рабочие дни) —
         # влияет на логику «рабочий день / business day». None → обычные Пн–Пт.
         self.calendar = calendar

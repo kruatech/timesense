@@ -6,8 +6,8 @@ from ..dict.morph_adapter import get_morph
 
 
 class Tokenizer:
-    def __init__(self):
-        self.morph = get_morph()
+    def __init__(self, morph=None):
+        self.morph = morph if morph is not None else get_morph()
 
     def tokenize(self, text):
         tokens = []

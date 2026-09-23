@@ -571,12 +571,12 @@ class OrdinalDayRecognizer(Recognizer):
                     if tt.value.isdigit():
                         h = int(tt.value)
                         if 0 <= h <= 23:
-                            if 1 <= h <= 7:
+                            if 1 <= h <= 7 and self.config.prefer_nearest_future:
                                 h += 12
                             return (h, 0, j + 1)
                     h = Keywords.parse_number_word(tt.value, self.morph)
                     if h is not None and 0 <= h <= 23:
-                        if 1 <= h <= 7:
+                        if 1 <= h <= 7 and self.config.prefer_nearest_future:
                             h += 12
                         return (h, 0, j + 1)
         return None
@@ -590,9 +590,9 @@ class OrdinalDayRecognizer(Recognizer):
                 h2 = int(m.group(3))
                 m2 = int(m.group(4)) if m.group(4) else 0
                 if 0 <= h1 <= 23 and 0 <= h2 <= 23:
-                    if 1 <= h1 <= 7:
+                    if 1 <= h1 <= 7 and self.config.prefer_nearest_future:
                         h1 += 12
-                    if 1 <= h2 <= 7:
+                    if 1 <= h2 <= 7 and self.config.prefer_nearest_future:
                         h2 += 12
                     return (h1, m1, h2, m2, j)
             if tokens[j].value.lower() in ["с", "со"] and j + 3 < len(tokens):
@@ -601,9 +601,9 @@ class OrdinalDayRecognizer(Recognizer):
                     if j + 2 < len(tokens) and tokens[j + 2].normalized in Keywords.TIME_TO:
                         h2 = self._ptv(tokens[j + 3])
                         if h2 is not None:
-                            if 1 <= h1 <= 7:
+                            if 1 <= h1 <= 7 and self.config.prefer_nearest_future:
                                 h1 += 12
-                            if 1 <= h2 <= 7:
+                            if 1 <= h2 <= 7 and self.config.prefer_nearest_future:
                                 h2 += 12
                             return (h1, 0, h2, 0, j + 3)
         return None

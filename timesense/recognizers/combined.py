@@ -77,7 +77,7 @@ class CombinedRecognizer(Recognizer):
         С уточнением: уточнение побеждает.
         """
         if part_of_day is None:
-            if 1 <= hour <= 7:
+            if 1 <= hour <= 7 and self.config.prefer_nearest_future:
                 return hour + 12
             return hour
 

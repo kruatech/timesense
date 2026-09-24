@@ -849,7 +849,7 @@ from timesense import ParseAnalysis, ParseStatus  # noqa: E402
         ("31 февраля в 10", ParseStatus.INVALID_DATE),
         ("в 25:00 встреча", ParseStatus.INVALID_DATE),
         ("в 10 мск созвон", ParseStatus.NEEDS_TIMEZONE),
-        ("at 10 EST call", ParseStatus.NEEDS_TIMEZONE),
+        pytest.param("at 10 EST call", ParseStatus.NEEDS_TIMEZONE, marks=needs_tzdata),
         ("в 10 " * 300, ParseStatus.TOO_LONG),
     ],
 )
@@ -1021,8 +1021,8 @@ def _ics_lines(ics):
     [
         ("завтра в 10 встреча", None),
         ("каждую пятницу до конца октября отчёт", None),
-        ("каждую пятницу в 18 отчёт", "Europe/Amsterdam"),
-        ("every monday at 9 standup", "America/New_York"),
+        pytest.param("каждую пятницу в 18 отчёт", "Europe/Amsterdam", marks=needs_tzdata),
+        pytest.param("every monday at 9 standup", "America/New_York", marks=needs_tzdata),
         ("с 10 до 11 созвон", "Europe/Moscow"),
         ("в октябре отпуск", None),
     ],
@@ -1054,6 +1054,7 @@ def test_ics_alarm(p):
         to_ics(r, alarm_minutes=-5)
 
 
+@needs_tzdata
 def test_ics_vtimezone_once_per_zone(p):
     from timesense import to_ics_calendar
 
